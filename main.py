@@ -28,6 +28,22 @@ def process(img):
     M = cv2.getPerspectiveTransform(corners, bounds)
     res = cv2.warpPerspective(img, M, (w, h))
 
+    res = cv2.fastNlMeansDenoisingColored(res, None, 14, 14, 11, 27)
+
+    # cv2.imshow('no median', res)
+
+    res = cv2.medianBlur(res, 7)
+
+    # cv2.imshow('median', res)
+
+    laplace = cv2.Laplacian(res, cv2.CV_64F, ksize=3)
+
+    resf64 = np.float64(res)
+    res = cv2.subtract(resf64, laplace * 0.9)
+    res = np.clip(res, 0, 255).astype('uint8')
+
+    # cv2.imshow('res', res)
+
     # cv2.imshow('res', res)
     # while True:
     #     cv2.waitKey(1)
@@ -43,7 +59,7 @@ if __name__ == "__main__":
             if '.jpg' not in file:
                 continue
             file_path = os.path.join(root, file)
-            # print(file)
+            print(file)
 
             img = cv2.imread(file_path, cv2.IMREAD_COLOR)
 
