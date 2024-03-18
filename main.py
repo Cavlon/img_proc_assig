@@ -21,23 +21,39 @@ def exemplar_paint(img, ksize=9):
     # Initialise confidence values for each pixel
     # Non-empty pixels as 1
     # Empty as 0
-    confidence = np.where(img_lab[:, :, 0] < 20, 255, 0).astype('float64')
+    thresh = np.where(img_lab[:, :, 0] < 20, 255, 0).astype('uint8')
     kernel = np.ones((3, 3), np.uint8)
-    confidence = cv2.dilate(confidence, kernel, iterations=1)
-    thresh = (255 - confidence)
-    confidence = thresh / 255
-    thresh = thresh.astype('uint8')
+    thresh = cv2.dilate(thresh, kernel, iterations=1)
+    thresh = (255 - thresh)
+    
 
     # Trim image to match confidence mask
     img_lab = cv2.bitwise_and(img_lab, img_lab, mask=thresh)
 
     k_area = ksize * ksize
     halfk = ksize // 2
-    h, w = img_lab.shape[:2]
+
+    contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
+    x, y, bw, bh = cv2.boundingRect(contours[1])
+    patch = img_lab[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1]
+    patchthresh = thresh[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1]
+    patchconf = (patchthresh.astype('float64')) / 255
+
+    # patch_view = cv2.resize(patch, (200, 200), interpolation = cv2.INTER_NEAREST)
+    # cv2.imshow('Patch', patch_view)
+    # patchb_view = cv2.resize(patchthresh, (200, 200), interpolation = cv2.INTER_NEAREST)
+    # cv2.imshow('Patch Binary', patchb_view)
 
     # Calculate the image partial derivatives
-    part_dir_x = cv2.Sobel(img_lab[:, :, 0], cv2.CV_64F, 1, 0, ksize=3)
-    part_dir_y = cv2.Sobel(img_lab[:, :, 0], cv2.CV_64F, 0, 1, ksize=3)
+    part_dir_x = cv2.Sobel(patch[:, :, 0], cv2.CV_64F, 1, 0, ksize=3)
+    part_dir_y = cv2.Sobel(patch[:, :, 0], cv2.CV_64F, 0, 1, ksize=3)
+
+    # partx_view = cv2.resize(part_dir_x, (200, 200), interpolation = cv2.INTER_NEAREST)
+    # cv2.imshow('PartX', partx_view)
+    # party_view = cv2.resize(part_dir_y, (200, 200), interpolation = cv2.INTER_NEAREST)
+    # cv2.imshow('PartY', party_view)
+
+    h, w = img_lab.shape[:2]
 
     # Run until area is fully painted
     while True:
@@ -55,15 +71,16 @@ def exemplar_paint(img, ksize=9):
         #     break
 
         # Find the fill front of the fill area
-        contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
+        contours, hierarchy = cv2.findContours(image=patchthresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
         if len(contours) == 1:
             break
 
         # contour = contours[1]
 
-        # img2 = img_lab.copy()
-        # cv2.drawContours(image=img2, contours=contours, contourIdx=-1, color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA)
-        # cv2.imshow('Contours', img2)
+        # conts = patch.copy()
+        # cv2.drawContours(image=conts, contours=contours[1:], contourIdx=-1, color=(0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+        # conts_view = cv2.resize(conts, (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Contours', conts_view)
 
         # Calculate the priority of each contour point
         max_priority = None
@@ -79,7 +96,7 @@ def exemplar_paint(img, ksize=9):
                 # Calculate confidence for the contour point
                 # Take a patch of conifidence values around the point
                 # Take the average of the confidence values
-                confidence_patch = confidence[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1]
+                confidence_patch = patchconf[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1]
                 c = np.sum(confidence_patch) / k_area
 
                 # Calculate the normal of the contour point
@@ -98,23 +115,50 @@ def exemplar_paint(img, ksize=9):
                 x_start, x_end = point[0] - halfk, point[0] + halfk + 1
                 y_start, y_end = point[1] - halfk, point[1] + halfk + 1
 
-                # part_dir_patch_x = part_dir_x[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1]
-                # part_dir_patch_y = part_dir_y[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1]
-                part_dir_patch = np.square(part_dir_x[y_start:y_end, x_start:x_end]) + np.square(part_dir_y[y_start:y_end, x_start:x_end])
-                isothope_point = np.unravel_index(part_dir_patch.argmax(), part_dir_patch.shape)
+                part_dir_patch_x = part_dir_x[y_start:y_end, x_start:x_end]
+                part_dir_patch_y = part_dir_y[y_start:y_end, x_start:x_end]
+
+                Ixx = np.square(part_dir_patch_x)
+                Ixy = part_dir_patch_x * part_dir_patch_y
+                Iyy = np.square(part_dir_patch_y)
+
+                Sxx = np.sum(Ixx)
+                Sxy = np.sum(Ixy)
+                Syy = np.sum(Iyy)
+
+                S = np.array([[Sxx, Sxy], [Sxy, Syy]])
+
+                eigenvalues, eigenvectors = np.linalg.eig(S)
+                # print(eigenvectors)
+                # print(eigenvalues)
+                max_eigenvalue_ind = np.argmax(eigenvalues)
+                max_eigenvector = eigenvectors[:, max_eigenvalue_ind]
+                # print(max_eigenvector)
+                # direction = patch.copy()
+                # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(max_eigenvector[0]), point[1] + int(max_eigenvector[1]))), (0, 255, 0), 2, cv2.LINE_AA)
+                # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(normal[0] * 10), point[1] + int(normal[1] * 10))), (0, 0, 255), 2, cv2.LINE_AA)
+                # direction_view = cv2.resize(direction, (200, 200), interpolation = cv2.INTER_NEAREST)
+                # cv2.imshow('Direction', direction_view)
+                # cv2.waitKey(0)
+
+                d = abs(np.dot(max_eigenvector, normal)) * (eigenvalues[max_eigenvalue_ind] / 255)
+
+                # part_dir_patch = np.square(part_dir_x[y_start:y_end, x_start:x_end]) + np.square(part_dir_y[y_start:y_end, x_start:x_end])
+                # isothope_point = np.unravel_index(part_dir_patch.argmax(), part_dir_patch.shape)
 
                 # Find the isothope of the contour point
                 # Use the image partial derivatives to find the isothope of the point
-                isothope = [-part_dir_x[y_start:y_end, x_start:x_end][isothope_point], -part_dir_y[y_start:y_end, x_start:x_end][isothope_point]]
+                # isothope = [-part_dir_x[y_start:y_end, x_start:x_end][isothope_point], -part_dir_y[y_start:y_end, x_start:x_end][isothope_point]]
 
-                # copy = img_lab.copy()
-                # cv2.line(copy, ((point[0], point[1])), ((point[0] + int(isothope[0] * 10), point[1] + int(isothope[1] * 10))), (0, 255, 0), 2, cv2.LINE_AA)
-                # cv2.line(copy, ((point[0], point[1])), ((point[0] + int(normal[0] * 10), point[1] + int(normal[1] * 10))), (0, 0, 255), 2, cv2.LINE_AA)
-                # cv2.imshow('Direction', copy)
-                # cv2.waitKey(0)
+                # direction = patch.copy()
+                # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(isothope[0] * 10), point[1] + int(isothope[1] * 10))), (0, 255, 0), 2, cv2.LINE_AA)
+                # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(normal[0] * 10), point[1] + int(normal[1] * 10))), (0, 0, 255), 2, cv2.LINE_AA)
+                # direction_view = cv2.resize(direction, (200, 200), interpolation = cv2.INTER_NEAREST)
+                # cv2.imshow('Direction', direction_view)
 
                 # Calculate the data value
-                d = ((normal[0] * isothope[0]) + (normal[1] * isothope[1])) / 255
+                # d = ((normal[0] * isothope[0]) + (normal[1] * isothope[1])) / 255
+                # d = 1
 
                 # Use the confidence and data values to calculate the point's priority
                 priority = c * d
@@ -132,8 +176,8 @@ def exemplar_paint(img, ksize=9):
         k_inds = (chosen_point[1] - halfk, chosen_point[1] + halfk + 1, chosen_point[0] - halfk, chosen_point[0] + halfk + 1)
 
         # Get the corresponding patch for the chosen point in the image
-        fill_patch = img_lab[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]
-        fill_patchmask = thresh[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] / 255
+        fill_patch = patch[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]
+        fill_patchmask = patchthresh[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] / 255
         fill_patchmask = fill_patchmask.astype('uint8')
 
         # fill_view_patch1 = cv2.resize(fill_patch, (225, 225), interpolation = cv2.INTER_NEAREST)
@@ -144,17 +188,29 @@ def exemplar_paint(img, ksize=9):
         sample_patch = None
 
         # Iterate through every possible patch
-        for i in range(halfk, h - halfk + 1):
-            for j in range(halfk, w - halfk + 1):
+        for i in range(halfk, h//5 - halfk):
+            for j in range(w//2 + halfk, w - halfk):
                 check_patchmask = thresh[i - halfk: i + halfk + 1, j - halfk: j + halfk + 1]
 
                 # Make sure the patch doesn't overlap the empty area
-                if cv2.countNonZero(check_patchmask) != k_area:
+                if np.any(check_patchmask == 0):
                     continue
 
                 check_patch = img_lab[i - halfk: i + halfk + 1, j - halfk: j + halfk + 1]
+                # check_view_patch = cv2.resize(check_patch, (225, 225), interpolation = cv2.INTER_NEAREST)
+                # cv2.imshow('check', check_view_patch)
+                # cv2.waitKey(0)
 
                 # Find the ssd of the non-empty indices
+                # if check_patch.shape[:2] != fill_patchmask.shape:
+                #     print()
+                #     print(i)
+                #     print(j)
+                #     print(check_patch.shape[0])
+                #     print(check_patch.shape[1])
+                #     check_view_patch = cv2.resize(check_patch, (225, 225), interpolation = cv2.INTER_NEAREST)
+                #     cv2.imshow('check', check_view_patch)
+                #     cv2.waitKey(0)
                 diff = cv2.bitwise_and(check_patch, check_patch, mask=fill_patchmask)
                 diff = fill_patch - diff
                 diff = np.square(diff)
@@ -176,25 +232,39 @@ def exemplar_paint(img, ksize=9):
         sample_patch = cv2.bitwise_and(sample_patch, sample_patch, mask=fill_patchmask)
         # fill_patch = fill_patch + sample_patch
 
-        # fill_view_patch = cv2.resize(fill_patch, (225, 225), interpolation = cv2.INTER_LINEAR)
+        # fill_view_patch = cv2.resize(fill_patch, (225, 225), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('fill', fill_view_patch)
 
         # Replace the empty pixels with the values from the sample
-        img_lab[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] += sample_patch
-        # fill_view_patch = cv2.resize(img_lab[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]], (225, 225), interpolation = cv2.INTER_NEAREST)
+        patch[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] += sample_patch
+        # fill_view_patch = cv2.resize(patch[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]], (225, 225), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('fill', fill_view_patch)
 
         # Update the confidence values
         conf_upd = fill_patchmask.astype('float64') * c_val
-        confidence[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] += conf_upd
-        thresh[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] = 255
+        patchconf[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] += conf_upd
+        patchthresh[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] = 255
 
-        patch_part_dir_x = cv2.Sobel(img_lab[k_inds[0] - 1: k_inds[1] + 1, k_inds[2] - 1: k_inds[3] + 1, 0], cv2.CV_64F, 1, 0, ksize=3)
-        patch_part_dir_y = cv2.Sobel(img_lab[k_inds[0] - 1: k_inds[1] + 1, k_inds[2] - 1: k_inds[3] + 1, 0], cv2.CV_64F, 0, 1, ksize=3)
+        thresh[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1] = patchthresh
+
+        patch_part_dir_x = cv2.Sobel(patch[k_inds[0] - 1: k_inds[1] + 1, k_inds[2] - 1: k_inds[3] + 1, 0], cv2.CV_64F, 1, 0, ksize=3)
+        patch_part_dir_y = cv2.Sobel(patch[k_inds[0] - 1: k_inds[1] + 1, k_inds[2] - 1: k_inds[3] + 1, 0], cv2.CV_64F, 0, 1, ksize=3)
 
         part_dir_x[k_inds[0] - 1: k_inds[1] + 1, k_inds[2] - 1: k_inds[3] + 1] = patch_part_dir_x
         part_dir_y[k_inds[0] - 1: k_inds[1] + 1, k_inds[2] - 1: k_inds[3] + 1] = patch_part_dir_y
+
+        # patch_view = cv2.resize(patch, (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Patch', patch_view)
+        # patchb_view = cv2.resize(patchthresh, (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Patch Binary', patchb_view)
+        # patchconf_view = cv2.resize((patchconf * 255).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Patch Conf', patchconf_view)
+        # partx_view = cv2.resize(part_dir_x, (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('PartX', partx_view)
+        # party_view = cv2.resize(part_dir_y, (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('PartY', party_view)
         # cv2.waitKey(0)
+    img_lab[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1] = patch
     res = cv2.cvtColor(img_lab, cv2.COLOR_Lab2BGR)
     # cv2.imshow('Result', res)
     # cv2.waitKey(0)
@@ -234,7 +304,7 @@ def process(img, verbose):
     # mask = cv2.dilate(mask, kernel, iterations = 2)
     # bilat[mask == 255] = bilat2[mask == 255]
 
-    paint = exemplar_paint(bilat, 11)
+    paint = exemplar_paint(bilat, 13)
 
     # paint = cv2.inpaint(bilat,mask,5,cv2.INPAINT_NS)
 
