@@ -2,48 +2,56 @@ import sys
 import os
 import cv2
 import numpy as np
-import math
-
-from cProfile import Profile
-from pstats import SortKey, Stats
-
-count = 0
-def print_position(event, x, y, flags, param):
-    global count
-    if event == cv2.EVENT_LBUTTONDOWN:
-        count += 1
-        print(f"position ({x},{y})")
 
 def exemplar_paint(img, ksize=9):
+    h, w = img.shape[:2]
+
     # Use the CIELAB colour space
     img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
-    # cv2.imshow('lab', img_lab[:, :, 0])
+    img_val = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[:, :, 2]
+    # cv2.imshow('grey', img_val)
+    # cv2.imshow('lab', img_lab)
 
     # Create a mask for the area to fill in
-    thresh = np.where(img_lab[:, :, 0] < 20, 255, 0).astype('uint8')
-    kernel = np.ones((3, 3), np.uint8)
-    thresh = cv2.dilate(thresh, kernel, iterations=2)
-    thresh = (255 - thresh)
-    
+    thresh = np.where(img_val < 20, 0, 255).astype('uint8')
+    # cv2.imshow('thresh', thresh)
 
-    # Trim image to match the mask
-    img_lab = cv2.bitwise_and(img_lab, img_lab, mask=thresh)
-
-    k_area = ksize * ksize
     halfk = ksize // 2
 
     # Isolate a small area around the fill area to work on
     contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
+    # conts = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+    # cv2.drawContours(image=conts, contours=contours, contourIdx=-1, color=(0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+    # conts_view = cv2.resize(conts, (200, 200), interpolation = cv2.INTER_NEAREST)
+    # cv2.imshow('Contours', conts_view)
+    x = None
+    y = None
+    bw = None
+    bh = None
+    for i in range(1, len(contours)):
+        x, y, bw, bh = cv2.boundingRect(contours[i])
+        if (bw > ksize * 2) and (bh > ksize * 2):
+            thresh = np.zeros(img.shape[:2], dtype="uint8")
+            cv2.drawContours(thresh, [contours[i]], 0, color=255, thickness=-1)
+            kernel = np.ones((3, 3), np.uint8)
+            thresh = cv2.dilate(thresh, kernel, iterations=2)
+            thresh = 255 - thresh
+            break
+    contours, hierarchy = cv2.findContours(image=thresh, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
     x, y, bw, bh = cv2.boundingRect(contours[1])
+    # Trim image to match the mask
+    img_lab = cv2.bitwise_and(img_lab, img_lab, mask=thresh)
     patch = img_lab[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1]
     patchthresh = thresh[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1]
     patchconf = (patchthresh.astype('float64')) / 255
     patchgrey = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
 
+    # cv2.imshow('thresh', thresh)
     # patch_view = cv2.resize(patch, (200, 200), interpolation = cv2.INTER_NEAREST)
     # cv2.imshow('Patch', patch_view)
     # patchb_view = cv2.resize(patchthresh, (200, 200), interpolation = cv2.INTER_NEAREST)
     # cv2.imshow('Patch Binary', patchb_view)
+    # cv2.waitKey(0)
 
     # Calculate the patch partial derivatives using luminosity
     part_dir_x = cv2.Sobel(patchgrey, cv2.CV_64F, 1, 0, ksize=3)
@@ -64,8 +72,6 @@ def exemplar_paint(img, ksize=9):
     # cv2.imshow('PartX', partx_view)
     # party_view = cv2.resize(((part_dir_y * (255/(np.max(part_dir_y) - np.min(part_dir_y)))) - np.min(part_dir_y * (255/(np.max(part_dir_y) - np.min(part_dir_y))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
     # cv2.imshow('PartY', party_view)
-
-    h, w = img_lab.shape[:2]
 
     # Run until area is fully painted
     while True:
@@ -114,7 +120,7 @@ def exemplar_paint(img, ksize=9):
                 # Take the average of the confidence values
                 confidence_patch = patchconf[y_start: y_end, x_start: x_end]
                 c = np.mean(confidence_patch)
-                c = c**2
+                c = c ** 2
 
                 # labshow = cv2.resize(patch[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1], (200, 200), interpolation = cv2.INTER_NEAREST)
                 # cv2.imshow('labpatch', labshow)
@@ -193,10 +199,11 @@ def exemplar_paint(img, ksize=9):
                 # print(eigenvalues[max_eigenvalue_ind])
 
                 # direction = patch.copy()
-                # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(max_eigenvector[0] * 10), point[1] + int(max_eigenvector[1] * 10))), (0, 255, 0), 1, cv2.LINE_AA)
+                # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(max_eigenvector[0]), point[1] + int(max_eigenvector[1]))), (0, 255, 0), 1, cv2.LINE_AA)
                 # cv2.line(direction, ((point[0], point[1])), ((point[0] + int(normal[0] * 10), point[1] + int(normal[1] * 10))), (0, 0, 255), 1, cv2.LINE_AA)
                 # direction_view = cv2.resize(direction, (200, 200), interpolation = cv2.INTER_NEAREST)
                 # cv2.imshow('Direction', direction_view)
+                # cv2.waitKey(0)
 
                 # Calculate the data value
                 d = abs(np.dot(max_eigenvector, normal)) / 255
@@ -226,12 +233,19 @@ def exemplar_paint(img, ksize=9):
                     max_priority = priority
                     chosen_point = point
                     c_val = c
+                    # eig = max_eigenvector
                 
                 if priority > max_priority:
                     max_priority = priority
                     chosen_point = point
                     c_val = c
+                    # eig = max_eigenvector
         k_inds = (chosen_point[1] - halfk, chosen_point[1] + halfk + 1, chosen_point[0] - halfk, chosen_point[0] + halfk + 1)
+        # direction = patch.copy()
+        # cv2.line(direction, ((chosen_point[0], chosen_point[1])), ((chosen_point[0] + int(eig[0]), point[1] + int(eig[1]))), (0, 255, 0), 1, cv2.LINE_AA)
+        # direction_view = cv2.resize(direction, (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Direction', direction_view)
+        # cv2.waitKey(0)
 
         # Get the corresponding patch for the chosen point in the image
         fill_patch = patch[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]
@@ -330,10 +344,11 @@ def exemplar_paint(img, ksize=9):
         kernel = np.ones((3,3),np.uint8)
         mask = cv2.dilate(mask, kernel, iterations = 2)
         mask = 255 - mask
-        part_dir_x = cv2.bitwise_and(part_dir_x, part_dir_x, mask=mask)
-        part_dir_y = cv2.bitwise_and(part_dir_y, part_dir_y, mask=mask)
+        Ixx = cv2.bitwise_and(Ixx, Ixx, mask=mask)
+        Ixy = cv2.bitwise_and(Ixy, Ixy, mask=mask)
+        Iyy = cv2.bitwise_and(Iyy, Iyy, mask=mask)
 
-        # a = cv2.resize(((part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] * (255/(np.max(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]) - np.min(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]])))) - np.min(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] * (255/(np.max(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]) - np.min(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # a = cv2.resize(((part_dir_x * (255/(np.max(part_dir_x) - np.min(part_dir_x)))) - np.min(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]] * (255/(np.max(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]) - np.min(part_dir_x[k_inds[0]: k_inds[1], k_inds[2]: k_inds[3]]))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('a', a)
         # b = cv2.resize(patch_part_dir_x[1:-1, 1:-1], (200, 200), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('b', b)
@@ -344,11 +359,17 @@ def exemplar_paint(img, ksize=9):
         # cv2.imshow('Patch Binary', patchb_view)
         # patchconf_view = cv2.resize((patchconf * 255).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('Patch Conf', patchconf_view)
-        # partx_view = cv2.resize(((Ixx * (255/(np.max(Ixx) - np.min(Ixx)))) - np.min(Ixx * (255/(np.max(Ixx) - np.min(Ixx))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # Ixx_view = cv2.resize(((Ixx * (255/(np.max(Ixx) - np.min(Ixx)))) - np.min(Ixx * (255/(np.max(Ixx) - np.min(Ixx))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Ixx', Ixx_view)
+        # Ixy_view = cv2.resize(((Ixy * (255/(np.max(Ixy) - np.min(Ixy)))) - np.min(Ixy * (255/(np.max(Ixy) - np.min(Ixy))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Ixy', Ixy_view)
+        # Iyy_view = cv2.resize(((Iyy * (255/(np.max(Iyy) - np.min(Iyy)))) - np.min(Iyy * (255/(np.max(Iyy) - np.min(Iyy))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # cv2.imshow('Iyy', Iyy_view)
+        # partx_view = cv2.resize(((patch_part_dir_x * (255/(np.max(patch_part_dir_x) - np.min(patch_part_dir_x)))) - np.min(patch_part_dir_x * (255/(np.max(patch_part_dir_x) - np.min(patch_part_dir_x))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('PartX', partx_view)
-        # party_view = cv2.resize(((Iyy * (255/(np.max(Iyy) - np.min(Iyy)))) - np.min(Iyy * (255/(np.max(Iyy) - np.min(Iyy))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
+        # party_view = cv2.resize(((patch_part_dir_y * (255/(np.max(patch_part_dir_y) - np.min(patch_part_dir_y)))) - np.min(patch_part_dir_y * (255/(np.max(patch_part_dir_y) - np.min(patch_part_dir_y))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('PartY', party_view)
-        # cv2.waitKey(0)
+        cv2.waitKey(0)
     img_lab[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1] = patch
     res = cv2.cvtColor(img_lab, cv2.COLOR_Lab2BGR)
     # cv2.imshow('Result', res)
@@ -356,14 +377,6 @@ def exemplar_paint(img, ksize=9):
     return res
 
 def process(img, verbose):
-    # cv2.namedWindow('collect coordinate')
-    # cv2.setMouseCallback('collect coordinate', print_position)
-    # cv2.imshow('collect coordinate', img)
-    # while True:
-    #     cv2.waitKey(1)
-    #     if count == 4:
-    #         break
-
     w, h = img.shape[:2]
     corners = np.float32([[9, 15], [233, 5], [30, 235], [249, 227]])
     bounds = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
@@ -371,9 +384,12 @@ def process(img, verbose):
     M = cv2.getPerspectiveTransform(corners, bounds)
     warp = cv2.warpPerspective(img, M, (w, h))
 
-    denoise = cv2.fastNlMeansDenoisingColored(warp, None, 13, 13, 11, 27)
+    median = cv2.medianBlur(warp, 3)
+
+    denoise = cv2.fastNlMeansDenoisingColored(median, None, 11, 11, 11, 27)
 
     bilat = cv2.bilateralFilter(denoise,9,20,20)
+    # bilat = denoise
 
     # median = cv2.medianBlur(bilat, 3)
     # median = bilat
@@ -407,7 +423,7 @@ def process(img, verbose):
     # median2 = cv2.medianBlur(paint, 7)
 
     img_YCrCb = cv2.cvtColor(bilat, cv2.COLOR_BGR2YCrCb)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(10, 10))
+    clahe = cv2.createCLAHE(clipLimit=8, tileGridSize=(10, 10))
     img_YCrCb[:, :, 0] = clahe.apply(img_YCrCb[:, :, 0])
     contrast = cv2.cvtColor(img_YCrCb, cv2.COLOR_YCrCb2BGR)
 
@@ -429,10 +445,26 @@ def process(img, verbose):
     laplace = cv2.Laplacian(paint, cv2.CV_64F, ksize=3)
 
     imgf64 = np.float64(paint)
-    sharp = cv2.subtract(imgf64, laplace * 0.25)
+    sharp = cv2.subtract(imgf64, laplace * 0.9)
     sharp = np.clip(sharp, 0, 255).astype('uint8')    
 
-    denoise2 = cv2.fastNlMeansDenoisingColored(sharp, None, 3, 3, 11, 27)
+    # denoise2 = cv2.fastNlMeansDenoisingColored(sharp, None, 7, 7, 11, 15)
+    denoise2 = cv2.bilateralFilter(sharp,9,60,60)
+
+    # bilat2 = denoise2.copy()
+    # bilat2 = cv2.medianBlur(denoise2, 7)
+    # mask = cv2.dilate(mask, kernel, iterations = 2)
+    # denoise2[mask == 255] = bilat2[mask == 255]
+
+    # paint = exemplar_paint(denoise2, 9)
+
+    # # paint = cv2.inpaint(bilat,mask,5,cv2.INPAINT_NS)
+
+    # paint2 = paint.copy()
+    # paint2 = cv2.medianBlur(paint2, 5)
+    # paint2 = cv2.GaussianBlur(paint2, (3, 3), 1)
+    # mask = cv2.dilate(mask, kernel, iterations = 2)
+    # paint[mask == 255] = paint2[mask == 255]
     # bilat2 = cv2.bilateralFilter(denoise2,9,60,60)
 
     # res = cv2.medianBlur(res, 3)
@@ -515,7 +547,7 @@ def process(img, verbose):
         cv2.imshow('warp', warp)
         cv2.imshow('denoise', denoise)
         cv2.imshow('bilat', bilat)
-        # cv2.imshow('median', median)
+        cv2.imshow('median', median)
         cv2.imshow('paint', paint)
         # cv2.imshow('median2', median2)
         cv2.imshow('sharp', sharp)
@@ -539,14 +571,26 @@ if __name__ == "__main__":
     if not os.path.exists("./Results"):
         os.makedirs("./Results")
     
+    select = None
     verbose = False
     if len(sys.argv) == 3:
         verbose = True
+        if sys.argv[2].isdigit():
+            select = sys.argv[2]
 
     for root, dirs, files in os.walk(path):
         for file in files:
             if '.jpg' not in file:
                 continue
+            if select:
+                if not (select in file):
+                    continue
+                file_path = os.path.join(root, file)
+                print(file)
+
+                img = cv2.imread(file_path, cv2.IMREAD_COLOR)
+
+                res = process(img, verbose)
             file_path = os.path.join(root, file)
             print(file)
 
