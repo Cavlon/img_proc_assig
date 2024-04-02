@@ -176,9 +176,25 @@ def exemplar_paint(img, ksize=9):
                 Sxx = np.mean(Ixx_patch[mask[y_start: y_end, x_start: x_end] == 255])
                 Sxy = np.mean(Ixy_patch[mask[y_start: y_end, x_start: x_end] == 255])
                 Syy = np.mean(Iyy_patch[mask[y_start: y_end, x_start: x_end] == 255])
-                # print(np.sum(Ixx[mask[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1] == 255]))
-                # print(len(mask[point[1] - halfk: point[1] + halfk + 1, point[0] - halfk: point[0] + halfk + 1] == 255))
+
+                # if Sxx == np.nan:
+                #     print("NAN")
+                #     Sxx = 0
+                #     Sxy = 0
+                #     Syy = 0
+                    
+                # print(np.sum(Ixx_patch[mask[y_start: y_end, x_start: x_end] == 255]))
+                # print(len(Ixx_patch[mask[y_start: y_end, x_start: x_end] == 255]))
+                # patch_view = cv2.resize(patch[y_start: y_end, x_start: x_end], (200, 200), interpolation = cv2.INTER_NEAREST)
+                # cv2.imshow('Patch', patch_view)
+                # patchb_view = cv2.resize(patchthresh[y_start: y_end, x_start: x_end], (200, 200), interpolation = cv2.INTER_NEAREST)
+                # cv2.imshow('Patch Binary', patchb_view)
+                
+                # print(Ixx_patch)
+                # print(mask[y_start: y_end, x_start: x_end])
                 # print(Sxx)
+                # print(type(Sxx))
+                # cv2.waitKey(0)
 
                 S = np.array([[Sxx, Sxy], [Sxy, Syy]])
 
@@ -342,7 +358,7 @@ def exemplar_paint(img, ksize=9):
 
         mask = 255 - patchthresh
         kernel = np.ones((3,3),np.uint8)
-        mask = cv2.dilate(mask, kernel, iterations = 2)
+        mask = cv2.dilate(mask, kernel, iterations = 1)
         mask = 255 - mask
         Ixx = cv2.bitwise_and(Ixx, Ixx, mask=mask)
         Ixy = cv2.bitwise_and(Ixy, Ixy, mask=mask)
@@ -369,7 +385,7 @@ def exemplar_paint(img, ksize=9):
         # cv2.imshow('PartX', partx_view)
         # party_view = cv2.resize(((patch_part_dir_y * (255/(np.max(patch_part_dir_y) - np.min(patch_part_dir_y)))) - np.min(patch_part_dir_y * (255/(np.max(patch_part_dir_y) - np.min(patch_part_dir_y))))).astype('uint8'), (200, 200), interpolation = cv2.INTER_NEAREST)
         # cv2.imshow('PartY', party_view)
-        cv2.waitKey(0)
+        # cv2.waitKey(0)
     img_lab[y - halfk - 1: y + bh + halfk + 1, x - halfk - 1: x + bw + halfk + 1] = patch
     res = cv2.cvtColor(img_lab, cv2.COLOR_Lab2BGR)
     # cv2.imshow('Result', res)
@@ -386,7 +402,7 @@ def process(img, verbose):
 
     median = cv2.medianBlur(warp, 3)
 
-    denoise = cv2.fastNlMeansDenoisingColored(median, None, 11, 11, 11, 27)
+    denoise = cv2.fastNlMeansDenoisingColored(median, None, 10, 10, 12, 27)
 
     bilat = cv2.bilateralFilter(denoise,9,20,20)
     # bilat = denoise
@@ -423,14 +439,14 @@ def process(img, verbose):
     # median2 = cv2.medianBlur(paint, 7)
 
     img_YCrCb = cv2.cvtColor(bilat, cv2.COLOR_BGR2YCrCb)
-    clahe = cv2.createCLAHE(clipLimit=8, tileGridSize=(10, 10))
+    clahe = cv2.createCLAHE(clipLimit=7, tileGridSize=(10, 10))
     img_YCrCb[:, :, 0] = clahe.apply(img_YCrCb[:, :, 0])
     contrast = cv2.cvtColor(img_YCrCb, cv2.COLOR_YCrCb2BGR)
 
-    bilat2 = contrast.copy()
-    bilat2 = cv2.medianBlur(contrast, 7)
-    mask = cv2.dilate(mask, kernel, iterations = 2)
-    contrast[mask == 255] = bilat2[mask == 255]
+    # bilat2 = contrast.copy()
+    # bilat2 = cv2.medianBlur(contrast, 7)
+    # mask = cv2.dilate(mask, kernel, iterations = 2)
+    # contrast[mask == 255] = bilat2[mask == 255]
 
     paint = exemplar_paint(contrast, 9)
 
@@ -438,14 +454,14 @@ def process(img, verbose):
 
     paint2 = paint.copy()
     paint2 = cv2.medianBlur(paint2, 5)
-    paint2 = cv2.GaussianBlur(paint2, (3, 3), 1)
+    paint2 = cv2.GaussianBlur(paint2, (3, 3), 2)
     mask = cv2.dilate(mask, kernel, iterations = 2)
     paint[mask == 255] = paint2[mask == 255]
 
     laplace = cv2.Laplacian(paint, cv2.CV_64F, ksize=3)
 
     imgf64 = np.float64(paint)
-    sharp = cv2.subtract(imgf64, laplace * 0.9)
+    sharp = cv2.subtract(imgf64, laplace * 0.8)
     sharp = np.clip(sharp, 0, 255).astype('uint8')    
 
     # denoise2 = cv2.fastNlMeansDenoisingColored(sharp, None, 7, 7, 11, 15)
