@@ -476,9 +476,11 @@ def process(img, verbose, test=False):
     bilat = cv2.bilateralFilter(denoise,9,20,20)
 
     img_YCrCb = cv2.cvtColor(bilat, cv2.COLOR_BGR2YCrCb)
-    clahe = cv2.createCLAHE(clipLimit=10, tileGridSize=(10, 10))
+    clahe = cv2.createCLAHE(clipLimit=8, tileGridSize=(10, 10))
     img_YCrCb[:, :, 0] = clahe.apply(img_YCrCb[:, :, 0])
     contrast = cv2.cvtColor(img_YCrCb, cv2.COLOR_YCrCb2BGR)
+
+    contrast = kuwahara_filter_color(contrast, 5, 0.25)
 
     paint = exemplar_paint(contrast, 9)
 
@@ -490,21 +492,18 @@ def process(img, verbose, test=False):
     mask = cv2.dilate(mask, kernel, iterations = 3)
 
     paint2 = paint.copy()
-    paint2 = cv2.medianBlur(paint2, 7)
+    paint2 = cv2.medianBlur(paint2, 5)
     paint2 = cv2.GaussianBlur(paint2, (3, 3), 2)
     paint[mask == 255] = paint2[mask == 255]
 
-    kuwa = kuwahara_filter_color(paint, 5, 0.75)
+    laplace = cv2.Laplacian(paint, cv2.CV_64F, ksize=3)
 
-    laplace = cv2.Laplacian(kuwa, cv2.CV_64F, ksize=3)
-
-    imgf64 = np.float64(kuwa)
+    imgf64 = np.float64(paint)
     sharp = cv2.subtract(imgf64, laplace * 1.1)
     sharp = np.clip(sharp, 0, 255).astype('uint8')    
 
     # denoise2 = cv2.fastNlMeansDenoisingColored(sharp, None, 7, 7, 11, 15)
-    denoise2 = cv2.bilateralFilter(sharp,9,40,40)
-    # denoise2 = cv2.medianBlur(sharp, 3)
+    denoise2 = cv2.bilateralFilter(sharp,9,50,50)
 
     # img_lab = cv2.cvtColor(denoise2, cv2.COLOR_BGR2Lab)
     # l = img_lab[:,:,0] / 255
@@ -532,7 +531,7 @@ def process(img, verbose, test=False):
         cv2.imshow('sharp', sharp)
         cv2.imshow('contrast', contrast)
         cv2.imshow('denoise2', denoise2)
-        cv2.imshow('gamma', gamma)
+        # cv2.imshow('gamma', gamma)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
     return denoise2
