@@ -392,7 +392,71 @@ def exemplar_paint(img, ksize=9):
     # cv2.waitKey(0)
     return res
 
-def process(img, verbose):
+def kuwahara_filter_color(img, ksize, sigma):
+    w, h = img.shape[:2]
+    halfk = ksize//2
+    # cv2.imshow("orig", img)
+
+    padded = cv2.copyMakeBorder(img, halfk, halfk, halfk, halfk, cv2.BORDER_REFLECT)
+
+    img_lab = cv2.cvtColor(padded, cv2.COLOR_BGR2Lab).astype(np.float64)
+
+    filtered_image = np.zeros(img.shape, dtype="float64")
+
+    squared_l = img_lab[:, :, 0] ** 2
+
+    # kernel = np.ones((halfk+1,halfk+1),np.float32)/((halfk+1)**2)
+    # mean_l = cv2.filter2D(l,-1,kernel)
+    # std_l = cv2.filter2D(squared_l,-1,kernel) - (mean_l ** 2)
+    # mean = cv2.filter2D(img_lab, -1, kernel)
+
+    kernel = cv2.getGaussianKernel(ksize, sigma)
+    zs = np.zeros((halfk, 1))
+    kleft = kernel[:halfk+1]
+    kright = kernel[halfk:]
+    ker_norm = np.sum(kleft)
+    kleft = kleft / ker_norm
+    kright = kright / ker_norm
+    kleft = np.concatenate((kleft, zs))
+    kright = np.concatenate((zs, kright))
+    
+    segments = np.array([cv2.sepFilter2D(img_lab, -1, kleft, kleft), cv2.sepFilter2D(img_lab, -1, kleft, kright), cv2.sepFilter2D(img_lab, -1, kright, kleft), cv2.sepFilter2D(img_lab, -1, kright, kright)])
+    mean_l = np.array([segments[0][:,:,0], segments[1][:,:,0], segments[2][:,:,0], segments[3][:,:,0]])
+    std_l = np.array([np.sqrt(np.abs(cv2.sepFilter2D(squared_l, -1, kleft, kleft) - (mean_l[0] ** 2))), np.sqrt(np.abs(cv2.sepFilter2D(squared_l, -1, kleft, kright) - (mean_l[1] ** 2))), np.sqrt(np.abs(cv2.sepFilter2D(squared_l, -1, kright, kleft) - (mean_l[2] ** 2))), np.sqrt(np.abs(cv2.sepFilter2D(squared_l, -1, kright, kright) - (mean_l[3] ** 2)))])
+    weights = np.array([1 / (1 + std_l[0]), 1 / (1 + std_l[1]), 1 / (1 + std_l[2]), 1 / (1 + std_l[3])])
+
+    # mean_l = cv2.GaussianBlur(l, (halfk+1, halfk+1), sigma)
+    # std_l = cv2.GaussianBlur(squared_l, (halfk+1, halfk+1), sigma) - (mean_l ** 2)
+    # mean = cv2.GaussianBlur(img_lab, (halfk+1, halfk+1), sigma)
+    # weights = 1 / (1 + std_l)
+
+    # quad_pos = halfk // 2
+    
+    for y in range(halfk, h + halfk):
+        for x in range(halfk, w + halfk):
+            # ws = np.array([weights[y-quad_pos][x-quad_pos], weights[y+quad_pos][x-quad_pos], weights[y-quad_pos][x+quad_pos], weights[y+quad_pos][x+quad_pos]])
+            # means = np.array([mean[y-quad_pos][x-quad_pos], mean[y+quad_pos][x-quad_pos], mean[y-quad_pos][x+quad_pos], mean[y+quad_pos][x+quad_pos]])
+            # print(means)
+            # print(means.transpose())
+            # print(ws)
+            # print(means.transpose() * ws)
+
+            # print(segments[0][y, x])
+            # print(weights[0][y, x])
+
+            wsum = 0
+            for i in range(4):
+                wsum += weights[i][y, x]
+                filtered_image[y-halfk][x-halfk] += segments[i][y, x] * weights[i][y, x]
+            filtered_image[y-halfk][x-halfk] /= wsum
+
+    filtered_image = filtered_image.astype(np.uint8)
+    filtered_image = cv2.cvtColor(filtered_image, cv2.COLOR_Lab2BGR)
+    # cv2.imshow("kuwa", filtered_image)
+    # cv2.waitKey(0)
+    return filtered_image
+
+def process(img, verbose, test=False):
     w, h = img.shape[:2]
     corners = np.float32([[9, 15], [233, 5], [30, 235], [249, 227]])
     bounds = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
@@ -400,164 +464,64 @@ def process(img, verbose):
     M = cv2.getPerspectiveTransform(corners, bounds)
     warp = cv2.warpPerspective(img, M, (w, h))
 
-    median = cv2.medianBlur(warp, 3)
+    # kuwahara_filter_color(warp)
 
-    denoise = cv2.fastNlMeansDenoisingColored(median, None, 10, 10, 12, 27)
+    # median = cv2.medianBlur(warp, 3)
+    median = kuwahara_filter_color(warp, 5, 1.5)
+    # cv2.imshow("a", median)
+    # cv2.waitKey(0)
+
+    denoise = cv2.fastNlMeansDenoisingColored(median, None, 10, 10, 11, 27)
 
     bilat = cv2.bilateralFilter(denoise,9,20,20)
-    # bilat = denoise
 
-    # median = cv2.medianBlur(bilat, 3)
-    # median = bilat
+    img_YCrCb = cv2.cvtColor(bilat, cv2.COLOR_BGR2YCrCb)
+    clahe = cv2.createCLAHE(clipLimit=10, tileGridSize=(10, 10))
+    img_YCrCb[:, :, 0] = clahe.apply(img_YCrCb[:, :, 0])
+    contrast = cv2.cvtColor(img_YCrCb, cv2.COLOR_YCrCb2BGR)
+
+    paint = exemplar_paint(contrast, 9)
 
     gray = cv2.cvtColor(bilat, cv2.COLOR_BGR2GRAY)
     mask = np.zeros(bilat.shape[:2], dtype="uint8")
     mask[gray < 20] = 255
 
     kernel = np.ones((5,5),np.uint8)
-    mask = cv2.dilate(mask, kernel, iterations = 1)
-    # bilat2 = bilat.copy()
-    # bilat2 = cv2.GaussianBlur(bilat, (3, 3), 2)
-    # mask = cv2.dilate(mask, kernel, iterations = 2)
-    # bilat[mask == 255] = bilat2[mask == 255]
-
-    # bilat2 = bilat.copy()
-    # bilat2 = cv2.medianBlur(bilat, 7)
-    # mask = cv2.dilate(mask, kernel, iterations = 2)
-    # bilat[mask == 255] = bilat2[mask == 255]
-
-    # paint = exemplar_paint(bilat, 9)
-
-    # # paint = cv2.inpaint(bilat,mask,5,cv2.INPAINT_NS)
-
-    # paint2 = paint.copy()
-    # paint2 = cv2.medianBlur(paint2, 5)
-    # paint2 = cv2.GaussianBlur(paint2, (3, 3), 1)
-    # mask = cv2.dilate(mask, kernel, iterations = 2)
-    # paint[mask == 255] = paint2[mask == 255]
-
-    # median2 = cv2.medianBlur(paint, 7)
-
-    img_YCrCb = cv2.cvtColor(bilat, cv2.COLOR_BGR2YCrCb)
-    clahe = cv2.createCLAHE(clipLimit=7, tileGridSize=(10, 10))
-    img_YCrCb[:, :, 0] = clahe.apply(img_YCrCb[:, :, 0])
-    contrast = cv2.cvtColor(img_YCrCb, cv2.COLOR_YCrCb2BGR)
-
-    # bilat2 = contrast.copy()
-    # bilat2 = cv2.medianBlur(contrast, 7)
-    # mask = cv2.dilate(mask, kernel, iterations = 2)
-    # contrast[mask == 255] = bilat2[mask == 255]
-
-    paint = exemplar_paint(contrast, 9)
-
-    # paint = cv2.inpaint(bilat,mask,5,cv2.INPAINT_NS)
+    mask = cv2.dilate(mask, kernel, iterations = 3)
 
     paint2 = paint.copy()
-    paint2 = cv2.medianBlur(paint2, 5)
+    paint2 = cv2.medianBlur(paint2, 7)
     paint2 = cv2.GaussianBlur(paint2, (3, 3), 2)
-    mask = cv2.dilate(mask, kernel, iterations = 2)
     paint[mask == 255] = paint2[mask == 255]
 
-    laplace = cv2.Laplacian(paint, cv2.CV_64F, ksize=3)
+    kuwa = kuwahara_filter_color(paint, 5, 0.75)
 
-    imgf64 = np.float64(paint)
-    sharp = cv2.subtract(imgf64, laplace * 0.8)
+    laplace = cv2.Laplacian(kuwa, cv2.CV_64F, ksize=3)
+
+    imgf64 = np.float64(kuwa)
+    sharp = cv2.subtract(imgf64, laplace * 1.1)
     sharp = np.clip(sharp, 0, 255).astype('uint8')    
 
     # denoise2 = cv2.fastNlMeansDenoisingColored(sharp, None, 7, 7, 11, 15)
-    denoise2 = cv2.bilateralFilter(sharp,9,60,60)
+    denoise2 = cv2.bilateralFilter(sharp,9,40,40)
+    # denoise2 = cv2.medianBlur(sharp, 3)
 
-    # bilat2 = denoise2.copy()
-    # bilat2 = cv2.medianBlur(denoise2, 7)
-    # mask = cv2.dilate(mask, kernel, iterations = 2)
-    # denoise2[mask == 255] = bilat2[mask == 255]
-
-    # paint = exemplar_paint(denoise2, 9)
-
-    # # paint = cv2.inpaint(bilat,mask,5,cv2.INPAINT_NS)
-
-    # paint2 = paint.copy()
-    # paint2 = cv2.medianBlur(paint2, 5)
-    # paint2 = cv2.GaussianBlur(paint2, (3, 3), 1)
-    # mask = cv2.dilate(mask, kernel, iterations = 2)
-    # paint[mask == 255] = paint2[mask == 255]
-    # bilat2 = cv2.bilateralFilter(denoise2,9,60,60)
-
-    # res = cv2.medianBlur(res, 3)
-
-    # cv2.imshow('median3', res)
-
-    # b, g, r = cv2.split(denoise2)
-
-    # b = np.clip(((b/255) ** 4) * 255, 0, 255).astype(np.uint8)
-    # g = np.clip(((g/255) ** 2) * 255, 0, 255).astype(np.uint8)
-    # col = cv2.merge([b, g, r])
-
-    # hsv = cv2.cvtColor(denoise2, cv2.COLOR_BGR2HSV)
-    # h, s, v = cv2.split(hsv)
-
-    # maskb = np.zeros(denoise2.shape[:2], dtype="uint8")
-    # masky = np.zeros(denoise2.shape[:2], dtype="uint8")
-    # maskr = np.zeros(denoise2.shape[:2], dtype="uint8")
-    # masky[h < 50] = 255
-    # maskr[h < 15] = 255
-    # maskb[h > 100] = 255
-    # maskr = cv2.dilate(maskr, kernel, iterations = 1)
-    # # cv2.imshow('masky', masky)
-    # # cv2.imshow('maskr', maskr)
-    # # cv2.imshow('maskb', maskb)
-
-    # # s[maskr == 255] = np.clip(s[maskr == 255] * 1.1, 0, 255)
-    # # s[maskb == 255] = s[maskb == 255] / 1.5
-    # # v[maskb == 255] = v[maskb == 255] / 2
-    # maskw = np.zeros(denoise2.shape[:2], dtype="uint8")
-    # maskw[s < 50] = 255
-    # # cv2.imshow('maskw', maskw)
-    # hsv = cv2.merge([h, s, v])
-    # col = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
-    # lab = cv2.cvtColor(col, cv2.COLOR_BGR2LAB)
-    # l, a, b = cv2.split(lab)
-    # # l = np.clip(((l/255) ** 0.6) * 255, 0, 255).astype(np.uint8)
-    # # l = cv2.equalizeHist(l)
-    # # mask = np.zeros(col.shape[:2], dtype="uint8")
-    # # mask[l > 90] = 255
-    # # cv2.imshow('mask', mask)
-    # # l[maskb == 255] = l[maskb == 255] / 3
-
-    # # maskl = cv2.bitwise_and(l, l, mask=mask)
-    # # maskl = cv2.equalizeHist(maskl)
-    # # l[mask == 255] = maskl[mask == 255]
-
-    # # mask = cv2.bitwise_or(masky, maskw)
-    # max_val = l[maskb == 0].max()
-    # min_val = l[maskb == 0].min()
-    # target_max = 255
-    # target_min = 0
-    # l = l.astype(np.float64)
-    # l[maskb == 0] = (l[maskb == 0] - min_val) * ((target_max - target_min) / (max_val - min_val)) + target_min
-    # l = l.astype(np.uint8)
-
-    # # mask = cv2.bitwise_or(masky, maskw)
-    # mask = masky
-    # # l[mask == 0] = l[mask == 0] / 1.3
-    # # l[mask == 255] = np.clip(l[mask == 255] * 1.05, 0, 255)
-    # # l[maskr == 255] = l[maskr == 255] / 1.5
-
-    # lab = cv2.merge([l, a, b])
-    # gamma = cv2.cvtColor(lab, cv2.COLOR_Lab2BGR)
-
-    # lab = cv2.cvtColor(col, cv2.COLOR_BGR2LAB)
-    # l, a, b = cv2.split(lab)
-    
-    # # l[maskr == 255] = np.clip((l[maskr == 255] + 10) * 1.1, 0, 255)
-    # # l2 = cv2.GaussianBlur(l, (3, 3), 1)
-    # # l2 = cv2.medianBlur(l2, 3)
-    # # masky = cv2.dilate(masky, kernel, iterations = 2)
-    # # l[masky == 255] = l2[masky == 255]
-    # lab = cv2.merge([l, a, b])
-    # contrast2 = cv2.cvtColor(lab, cv2.COLOR_Lab2BGR)
-
+    # img_lab = cv2.cvtColor(denoise2, cv2.COLOR_BGR2Lab)
+    # l = img_lab[:,:,0] / 255
+    # l = np.power(l, 1.15) * 0.95
+    # img_lab[:,:,0] = np.clip(l * 255, 0, 255)
+    # # np.clip(img_lab[:, :, 0], 0, 255)
+    # gamma = cv2.cvtColor(img_lab, cv2.COLOR_Lab2BGR)
+    if test:
+        cv2.imwrite(os.path.join("./test_imgs", "orig.jpg"), img)
+        cv2.imwrite(os.path.join("./test_imgs", "warp.jpg"), warp)
+        cv2.imwrite(os.path.join("./test_imgs", "median.jpg"), median)
+        cv2.imwrite(os.path.join("./test_imgs", "denoise.jpg"), denoise)
+        cv2.imwrite(os.path.join("./test_imgs", "bilat.jpg"), bilat)
+        cv2.imwrite(os.path.join("./test_imgs", "contrast.jpg"), contrast)
+        cv2.imwrite(os.path.join("./test_imgs", "paint.jpg"), paint)
+        cv2.imwrite(os.path.join("./test_imgs", "sharp.jpg"), sharp)
+        cv2.imwrite(os.path.join("./test_imgs", "denoise2.jpg"), denoise2)
     if verbose:
         cv2.imshow('orig', img)
         cv2.imshow('warp', warp)
@@ -565,19 +529,10 @@ def process(img, verbose):
         cv2.imshow('bilat', bilat)
         cv2.imshow('median', median)
         cv2.imshow('paint', paint)
-        # cv2.imshow('median2', median2)
         cv2.imshow('sharp', sharp)
         cv2.imshow('contrast', contrast)
         cv2.imshow('denoise2', denoise2)
-        # cv2.imshow('bilat2', bilat2)
-        # cv2.imshow('denoise3', denoise3)
-        # cv2.imshow('gamma', gamma)
-        # cv2.imshow('contrast2', contrast2)
-        # cv2.imshow('col', col)
-        # cv2.imshow('l', l)
-        # cv2.imshow('s', s)
-        # cv2.imshow('v', v)
-        # cv2.imshow('h', h)
+        cv2.imshow('gamma', gamma)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
     return denoise2
